@@ -131,7 +131,7 @@ impl Font {
             Source::Outline,
         ]).render(&mut scaler, glyph_id.unwrap())?;
 
-        (image.placement.width == 0 || image.placement.height == 0).then(|| {
+        (image.placement.width > 0 && image.placement.height > 0).then(|| {
             let height = image.placement.height as f32;
 
             SwashMetrics {
