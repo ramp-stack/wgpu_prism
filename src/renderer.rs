@@ -1,70 +1,103 @@
-use wgpu::{DepthStencilState, MultisampleState, TextureFormat, RenderPass, Device, Queue};
+use prism::drawable::Instruction;
+use wgpu::{
+    CommandEncoderDescriptor, CompareFunction, DepthBiasState, DepthStencilState, Device,
+    DeviceDescriptor, Extent3d, Features, Instance, InstanceDescriptor, Limits, LoadOp,
+    MultisampleState, Operations, PowerPreference, Queue, RenderPassColorAttachment,
+    RenderPassDepthStencilAttachment, RenderPassDescriptor, RequestAdapterOptions, StencilState,
+    StoreOp, Surface, SurfaceConfiguration, TextureDescriptor, TextureDimension, TextureFormat,
+    TextureUsages, TextureView, TextureViewDescriptor, Trace, WindowHandle,
+};
 
-mod buffer;
-mod vertex;
-mod color;
-use color::ColorRenderer;
-mod image;
-use image::ImageRenderer;
-mod atlas;
-pub use atlas::Atlas;
+use crate::pipeline::Pipeline;
 
-use crate::{Instruction, Item, Area};
-
-pub struct Renderer {
-    color_renderer: ColorRenderer,
-    image_renderer: ImageRenderer,
+pub struct Renderer<'surface> {
+    _instance: Instance,
+    surface: Surface<'surface>,
+    device: Device,
+    queue: Queue,
+    config: SurfaceConfiguration,
+    msaa: TextureView,
+    depth: TextureView,
+    pipeline: Pipeline,
 }
-
-impl Renderer {
-    /// Create all unchanging resources here.
-    pub fn new(
-        device: &Device,
-        texture_format: &TextureFormat,
-        multisample: MultisampleState,
-        depth_stencil: Option<DepthStencilState>,
-    ) -> Self {
-        Renderer{
-            color_renderer: ColorRenderer::new(device, texture_format, multisample, depth_stencil.clone()),
-            image_renderer: ImageRenderer::new(device, texture_format, multisample, depth_stencil.clone()),
-        }
+impl<'surface> Renderer<'surface> {
+    pub async fn new<W: WindowHandle + 'surface>(window: W, width: u32, height: u32) -> Self {
+        let instance = Instance::new(&InstanceDescriptor::default());
+        let surface = instance.create_surface(window).unwrap();
+        let adapter = instance.request_adapter(&RequestAdapterOptions {
+            power_preference: PowerPreference::None,
+            compatible_surface: Some(&surface), force_fallback_adapter: false,
+        }).await.unwrap();
+        let mut limits = Limits::downlevel_webgl2_defaults();
+        limits.max_texture_dimension_2d = if cfg!(target_os = "android") {4096} else {8192};
+        let (device, queue) = adapter.request_device(&DeviceDescriptor {
+            required_features: Features::empty(), required_limits: limits, label: None,
+            memory_hints: Default::default(), trace: Trace::Off,
+        }).await.unwrap();
+        let capabilities = surface.get_capabilities(&adapter);
+        let max = device.limits().max_texture_dimension_2d;
+        let config = SurfaceConfiguration {
+            usage: TextureUsages::RENDER_ATTACHMENT,
+            width: width.clamp(1, max), height: height.clamp(1, max),
+            format: capabilities.formats[0], present_mode: capabilities.present_modes[0],
+            alpha_mode: capabilities.alpha_modes[0], view_formats: vec![capabilities.formats[0]],
+            desired_maximum_frame_latency: 2,
+        };
+        surface.configure(&device, &config);
+        let multisample = MultisampleState {count: 4, mask: !0, alpha_to_coverage_enabled: true};
+        let depth = DepthStencilState {
+            format: TextureFormat::Depth32Float, depth_write_enabled: true,
+            depth_compare: CompareFunction::GreaterEqual, stencil: StencilState::default(),
+            bias: DepthBiasState::default(),
+        };
+        let pipeline = Pipeline::new(&device, &config.format, multisample, Some(depth));
+        let msaa = Self::attachment(&device, &config, config.format);
+        let depth = Self::attachment(&device, &config, TextureFormat::Depth32Float);
+        Self {_instance: instance, surface, device, queue, config, msaa, depth, pipeline}
     }
 
-    /// Prepare for rendering this frame; create all resources that will be
-    /// used during the next render that do not already exist.
-    ///
-    /// Items are given a z_index based on the order in which they are presented. First item in the
-    /// vector will be printed in the back of the stack(z = u16::MAX-1)
-    #[allow(clippy::too_many_arguments)]
-    pub fn prepare(
-        &mut self,
-        device: &Device,
-        queue: &Queue,
-        width: f32,
-        height: f32,
-        atlas: &mut Atlas,
-        items: Vec<Instruction>,
-    ) {
-        let (colors, images) = items.into_iter().enumerate().fold((vec![], vec![]), |mut a, (i, Instruction(area, item))| {
-            let z = i as u16;
-            match item {
-                Item::Shape(shape) => a.0.push((area, shape.shape, shape.color, z)),
-                Item::Image(image) => a.1.push((area, image.shape, image.image, image.color, z)),
-                Item::Text(text) => a.1.extend(atlas.text.get(text).into_iter().map(|(offset, shape, image, color)| (
-                    Area{offset: (area.offset.0+(offset.0), area.offset.1+(offset.1)), bounds: area.bounds},
-                    shape, image, color, z
-                )))
-            }
-            a
+    pub fn resize(&mut self, width: u32, height: u32) {
+        if width == 0 || height == 0 {return}
+        let max = self.device.limits().max_texture_dimension_2d;
+        self.config.width = width.min(max);
+        self.config.height = height.min(max);
+        self.surface.configure(&self.device, &self.config);
+        self.msaa = Self::attachment(&self.device, &self.config, self.config.format);
+        self.depth = Self::attachment(&self.device, &self.config, TextureFormat::Depth32Float);
+    }
+
+    pub fn draw(&mut self, instructions: Vec<Instruction>, scale: f32) {
+        let size = (self.config.width as f32, self.config.height as f32);
+        self.pipeline.prepare(&self.device, &self.queue, size, scale, instructions);
+        let output = self.surface.get_current_texture().unwrap();
+        let view = output.texture.create_view(&TextureViewDescriptor::default());
+        let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor::default());
+        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: None,
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: &self.msaa, resolve_target: Some(&view),
+                ops: Operations {load: LoadOp::Clear(wgpu::Color::TRANSPARENT), store: StoreOp::Discard},
+            })],
+            depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                view: &self.depth, stencil_ops: None,
+                depth_ops: Some(Operations {load: LoadOp::Clear(0.0), store: StoreOp::Discard}),
+            }),
+            occlusion_query_set: None, timestamp_writes: None,
         });
-
-        self.color_renderer.prepare(device, queue, width, height, colors);
-        self.image_renderer.prepare(device, queue, width, height, &mut atlas.image, images);
+        self.pipeline.render(&mut pass);
+        drop(pass);
+        self.queue.submit(Some(encoder.finish()));
+        output.present();
     }
 
-    /// Render using caller provided render pass.
-    pub fn render<'a>(&'a self, render_pass: &mut RenderPass<'a>) {
-        self.color_renderer.render(render_pass);
-        self.image_renderer.render(render_pass);
+    fn attachment(device: &Device, config: &SurfaceConfiguration, format: TextureFormat) -> TextureView {
+        device.create_texture(&TextureDescriptor {
+            label: None,
+            size: Extent3d {
+                width: config.width, height: config.height, depth_or_array_layers: 1,
+            },
+            mip_level_count: 1, sample_count: 4, dimension: TextureDimension::D2,
+            format, usage: TextureUsages::RENDER_ATTACHMENT, view_formats: &[],
+        }).create_view(&TextureViewDescriptor::default())
     }
 }

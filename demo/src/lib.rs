@@ -1,104 +1,67 @@
-use wgpu_canvas::*;
+use std::sync::Arc;
 
-use wgpu_canvas::{Canvas, Atlas, Area, Shape, ShapeType, Item, Image};
-use maverick_os::{Application, Context, Services};
-use maverick_os::window::{
-    Event, Lifetime, Input, TouchPhase, Touch, MouseScrollDelta, ElementState, Key, NamedKey
-};
+use image::{Rgba, RgbaImage};
+use maverick_os::{Application, Hardware, LogicalWindow, Window};
+use maverick_os::inputs::{DeviceInput, Input, MouseState};
+use prism::drawable::{Color, Instruction, Item, shape::{Shape, Variant}};
+use prism::hardware::Image;
 
-use std::sync::mpsc::{Receiver, channel};
-use std::collections::VecDeque;
-use std::marker::PhantomData;
-use std::time::Instant;
+pub struct Demo {window: LogicalWindow, image: Image, angle: f32}
+impl Application for Demo {
+    type Renderer = DemoRenderer;
 
-pub struct Ramp{
-    atlas: Atlas,
-    canvas: Canvas,
-    screen: (f32, f32),
-    scale_factor: f64
-}
-impl Ramp {
-    pub fn physical(&self, x: f32) -> f32 {(x as f64 * self.scale_factor) as f32}
-    pub fn logical(&self, x: f32) -> f32 {(x as f64 / self.scale_factor) as f32}
-
-    fn shape(&self, shape: ShapeType) -> ShapeType {
-        match shape {
-            ShapeType::Ellipse(s, (w, h), a) =>
-                ShapeType::Ellipse(self.physical(s), (self.physical(w), self.physical(h)), a),
-            ShapeType::Rectangle(s, (w, h), a) =>
-                ShapeType::Rectangle(self.physical(s), (self.physical(w), self.physical(h)), a),
-            ShapeType::RoundedRectangle(s, (w, h), a, c) =>
-                ShapeType::RoundedRectangle(self.physical(s), (self.physical(w), self.physical(h)), a, self.physical(c)),
+    fn name() -> String {"Prism renderer demo".into()}
+    fn new(_hardware: Hardware, window: LogicalWindow) -> Self {
+        let image = Arc::new(RgbaImage::from_fn(96, 96, |x, y| {
+            if (x / 12 + y / 12) % 2 == 0 {Rgba([255, 190, 30, 255])}
+            else {Rgba([30, 100, 210, 255])}
+        }));
+        Self {window, image, angle: 0.0}
+    }
+    fn on_input(&mut self, input: Input) {
+        match input {
+            Input::Resized(window) => self.window = window,
+            Input::Device(_, DeviceInput::Mouse(_, MouseState::Pressed(_))) => {
+                self.angle = (self.angle + 15.0) % 360.0;
+            }
+            _ => {}
         }
     }
-}
-impl Services for Ramp {}
-impl Application for Ramp {
-    async fn new(ctx: &mut Context) -> Self {
-        let scale_factor = ctx.window.scale_factor;
-        let screen = (
-            (ctx.window.size.0 as f64 / scale_factor) as f32,
-            (ctx.window.size.1 as f64 / scale_factor) as f32,
-        );
-
-        Ramp{
-            atlas: Atlas::default(),
-            canvas: Canvas::new(ctx.window.handle.clone(), ctx.window.size.0, ctx.window.size.1).await,
-            screen,
-            scale_factor,
-        }
-    }
-    async fn on_event(&mut self, ctx: &mut Context, event: Event) {
-        let window = matches!(event, Event::Lifetime(Lifetime::Resumed)).then(|| ctx.window.handle.clone());
-        match event {
-            Event::Lifetime(lifetime) => match lifetime {
-                Lifetime::Resized | Lifetime::Resumed => {
-                    self.scale_factor = ctx.window.scale_factor;
-                    self.canvas.resize(window, ctx.window.size.0, ctx.window.size.1);
-                    self.screen = (self.logical(ctx.window.size.0 as f32), self.logical(ctx.window.size.1 as f32));
-                },
-                Lifetime::Draw => {
-                    let drawn = vec![
-                        (Area{
-                            offset: (100.0, 100.0),
-                            bounds: None
-                        }, Item::Shape(Shape{
-                            shape: ShapeType::Rectangle(0.0, (100.0, 100.0), 0.0),
-                            color: Color(0, 255, 255, 255)
-                        }))
-                    ];
-                    let scaled: Vec<_> = drawn.into_iter().map(|(a, i)| {
-                        (Area{
-                            offset: (self.physical(a.offset.0), self.physical(a.offset.1)),
-                            bounds: a.bounds.map(|b| (self.physical(b.0), self.physical(b.1), self.physical(b.2), self.physical(b.3)))
-                        }, match i {
-                            Item::Shape(shape) => Item::Shape(Shape{
-                                shape: self.shape(shape.shape),
-                                color: shape.color
-                            }),
-                            Item::Image(image) => Item::Image(Image{
-                                shape: self.shape(image.shape),
-                                image: image.image,
-                                color: image.color
-                            }),
-                            Item::Text(mut text) => Item::Text({
-                                text.width = text.width.map(|w| self.physical(w));
-                                text.spans.iter_mut().for_each(|span| {
-                                    span.font_size = self.physical(span.font_size);
-                                    span.line_height = span.line_height.map(|l| self.physical(l));
-                                    span.kerning = self.physical(span.kerning);
-                                });
-                                text
-                            })
-                        })
-                    }).collect();
-                    self.canvas.draw(&mut self.atlas, scaled);
-                },
-                lifetime => {},
-            },
-            Event::Input(input) => {}
-        }
+    fn on_tick(&mut self) -> Vec<Instruction> {
+        let bound = (0.0, 0.0, self.window.size.0, self.window.size.1);
+        let mut rounded = Shape::new(100.0, 100.0, Color::GREEN, Variant::RoundedRectangle(20.0));
+        rounded.angle = self.angle;
+        let image = Shape::new(96.0, 96.0, Color::WHITE, Variant::Rectangle);
+        let items = [
+            ((24.0, 24.0), Item::Shape(Shape::new(100.0, 100.0, Color::CYAN, Variant::Rectangle))),
+            ((160.0, 24.0), Item::Shape(Shape::new(100.0, 100.0, Color::MAGENTA, Variant::Ellipse))),
+            ((24.0, 160.0), Item::Shape(rounded)),
+            ((160.0, 160.0), Item::Image(image, self.image.clone(), None)),
+        ];
+        items.into_iter().map(|(offset, item)| Instruction {bound, offset, item}).collect()
     }
 }
 
-maverick_os::start!(Ramp);
+pub struct DemoRenderer {window: Window, renderer: wgpu_prism::Renderer<'static>}
+impl maverick_os::Renderer for DemoRenderer {
+    type Instructions = Vec<Instruction>;
+
+    fn new(window: Window) -> Self {
+        let size = window.physical();
+        let renderer = futures::executor::block_on(wgpu_prism::Renderer::new(
+            window.clone(), size.width, size.height
+        ));
+        Self {window, renderer}
+    }
+    fn resize(&mut self) {
+        let size = self.window.physical();
+        self.renderer.resize(size.width, size.height);
+    }
+    fn draw(&mut self, instructions: Vec<Instruction>) {
+        let size = self.window.physical();
+        if size.width == 0 || size.height == 0 {return}
+        self.renderer.draw(instructions, size.scale_factor as f32);
+    }
+}
+
+maverick_os::start!(Demo);

@@ -6,7 +6,8 @@ struct ShapeInput {
     @location(4) z: f32,
     @location(5) stroke: f32,
     @location(6) color: vec4<f32>,
-    @location(7) texture: vec2<f32>
+    @location(7) texture: vec2<f32>,
+    @location(8) recolor: u32
 }
 
 struct VertexOutput {
@@ -17,7 +18,8 @@ struct VertexOutput {
     @location(3) @interpolate(flat) stroke: f32,
     @location(4) @interpolate(flat) color: vec4<f32>,
     @location(5) texture: vec2<f32>,
-    @location(6) vertex_position: vec2<f32>
+    @location(6) vertex_position: vec2<f32>,
+    @location(7) @interpolate(flat) recolor: u32
 };
 
 @vertex
@@ -34,6 +36,7 @@ fn vs_main(
     out.stroke = shape.stroke;
     out.color = shape.color;
     out.texture = shape.texture;
+    out.recolor = shape.recolor;
 	out.vertex_position = shape.position;
 
     return out;
@@ -46,6 +49,7 @@ var s_diffuse: sampler;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    if in.recolor != 0u && in.color[3] == 0.0 {discard;}
     if in.vertex_position.x < in.bounds[0] || in.vertex_position.x > in.bounds[2] ||
        in.vertex_position.y > in.bounds[1] || in.vertex_position.y < in.bounds[3] {
         discard;
@@ -57,7 +61,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         }
     }
     var color = textureSample(t_diffuse, s_diffuse, in.texture);
-    if in.color[3] > 0.0 {
+    if in.recolor != 0u {
         color = vec4<f32>(in.color[0], in.color[1], in.color[2], in.color[3]*color[3]);
     }
     return color;

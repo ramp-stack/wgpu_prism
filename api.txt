@@ -1,337 +1,55 @@
-================================================================
-WGPU_CANVAS - API REFERENCE
-A 2D WGPU renderer API for drawing text, shapes, and images.
-================================================================
+WGPU_PRISM API
 
+wgpu_prism provides one public rendering entry point:
 
+  Renderer<'surface>
 
-================================================================
-FILE: src/lib.rs  (crate root)
-================================================================
+    async fn new<W: wgpu::WindowHandle + 'surface>(window: W, width: u32, height: u32) -> Self
+    fn resize(&mut self, width: u32, height: u32)
+    fn draw(&mut self, instructions: Vec<prism::drawable::Instruction>, scale: f32)
 
-PURPOSE
-  Re-exports all public types and conditionally compiles the
-  renderer and canvas modules behind feature flags.
+Window width and height are physical pixels. Instructions use logical coordinates.
+Pass the window's display scale factor to draw. Do not pre-scale instructions.
 
-PUBLIC TYPES
+Prism owns all drawing data:
 
-  Color(u8, u8, u8, u8)
-    RGBA color. Derives Default, Copy, Hash, Ord.
-    Tuple struct — construct as Color(r, g, b, a).
+  prism::drawable::Instruction
+    offset: (f32, f32)
+    bound: (f32, f32, f32, f32)  -- clip x, y, width, height
+    item: Item
 
-  Shape  (struct)
-    A colored geometric shape for rendering.
-    Fields:
-      shape: ShapeType   — geometry (see shape.rs)
-      color: Color
+  prism::drawable::Item
+    Shape(prism::drawable::shape::Shape)
+    Text(prism::drawable::text::Text)
+    Image(prism::drawable::shape::Shape, Arc<image::RgbaImage>, Option<Color>)
+    The shape supplies display size and mask; its color is ignored for images.
+    None preserves image colors. Some(color) replaces RGB and multiplies source alpha by color alpha.
+    Images preserve aspect ratio and crop centrally to cover the shape.
 
-  Image  (struct)
-    A pixel image clipped to a ShapeType.
-    Fields:
-      shape: ShapeType
-      image: Arc<RgbaImage>
-      color: Option<Color>   — optional tint
+  prism::drawable::Icon(pub prism::hardware::Image, pub Color)
+    Implements Drawable with the same scalable size request as Image.
+    Image and Icon use their allocated layout size and share their source pixels.
 
-  Item  (enum)
-    The three drawable primitives the renderer accepts:
-      Item::Shape(Shape)
-      Item::Image(Image)
-      Item::Text(Text)
+  prism::drawable::shape::Shape
+    stroke, width, height, angle, color, variant
+    Variant: Ellipse, Rectangle, RoundedRectangle(radius)
+    Angles are degrees. A zero stroke fills the shape.
 
-  Area  (struct)
-    Describes where and how an Item is placed on screen.
-    Fields:
-      offset: (f32, f32)                — top-left position
-      bounds: Option<(f32,f32,f32,f32)> — clip rect (x0,y0,x1,y1)
-                                          None = no clipping
+  prism::drawable::text
+    Font, Text, Span, Align, Character
+    Prism performs text layout. The renderer rasterizes and caches its positioned glyphs.
 
-  pub use image::RgbaImage   — re-exported for convenience
+  prism::drawable::Color
+    RGBA bytes.
 
+The renderer owns surface configuration, GPU pipelines, frame buffers, and image/glyph caches.
+Ramp supplies a Maverick Renderer implementation around this type; no Maverick dependency
+is required by wgpu_prism itself.
 
-================================================================
-FILE: src/shape.rs
-================================================================
+Data flow:
+  Prism application -> Vec<Instruction> -> Ramp wrapper -> wgpu_prism::Renderer -> GPU
 
-PURPOSE
-  Defines the ShapeType geometry enum and all math helpers for
-  bounding-box computation and vertex positions.
-
-  Shape  (enum, pub as ShapeType in lib.rs)
-
-    Ellipse(stroke: f32, (width, height): (f32,f32), angle: f32)
-      A (possibly rotated) ellipse / circle.
-      stroke = 0.0 means filled.
-
-    Rectangle(stroke, (w,h), angle)
-      An axis-aligned or rotated rectangle.
-
-    RoundedRectangle(stroke, (w,h), angle, corner_radius: f32)
-      Rectangle with rounded corners.
-
-  METHODS (all &self)
-
-    .stroke() -> f32
-      Returns stroke thickness, clamped to min(w,h).
-
-    .angle() -> f32
-      Rotation angle in degrees.
-
-    .wh() -> [f32; 2]
-      Raw [width, height] before rotation.
-
-    .size() -> (f32, f32)
-      Axis-aligned bounding box size AFTER applying rotation.
-      Ellipse uses the parametric formula for a rotated ellipse.
-      Rectangle/RoundedRectangle project corners onto the axes.
-
-    .positions(offset: (f32,f32)) -> [[f32;2]; 4]
-      Returns the four quad corner positions (top-left,
-      top-right, bottom-left, bottom-right) after rotation,
-      shifted so the bounding box starts at `offset`.
-      Used by the renderer to build vertex buffers.
-
-
-================================================================
-FILE: src/text.rs
-================================================================
-
-PURPOSE
-  CPU-side text layout engine. Breaks spans of styled text into
-  lines of positioned glyphs. Results are cached globally by
-  hash to avoid re-layout on every frame.
-
-KEY TYPES
-
-  Font
-    Wraps fontdue::Font. Rasterised at scale 160.0.
-      ::from_bytes(bytes) -> Result<Self, &'static str>
-    Implements Deref<Target=fontdue::Font>, PartialEq (by file
-    hash), Hash (by file hash).
-
-  Align  (enum, Copy)
-    Left | Center | Right
-    Controls horizontal alignment within a fixed-width Text.
-
-  Span
-    A run of text with uniform styling.
-    Fields:
-      text:        String
-      font_size:   f32          — logical pixels
-      line_height: Option<f32>  — overrides fontdue default
-      font:        Arc<Font>
-      color:       Color
-      kerning:     f32          — extra inter-character spacing
-    Constructor: Span::new(text, font_size, line_height, font, color, kerning)
-
-  Text
-    A complete text block made of one or more Spans.
-    Fields:
-      spans:     Vec<Span>
-      width:     Option<f32>   — max width for wrapping
-      align:     Align
-      cursor:    Option<usize> — caret position (for editors)
-      max_lines: Option<u32>   — truncate + append "…" if exceeded
-    Constructor: Text::new(spans, width, align, max_lines)
-
-    METHODS
-
-      .size() -> (f32, f32)
-        Total bounding box of all laid-out lines.
-
-      .len() -> usize
-        Number of lines after layout.
-
-      .cursor_position() -> (f32, f32)
-        Pixel position of the cursor glyph. Used to render a
-        blinking caret in text editors.
-
-      .cursor_click(&mut self, x, y)
-        Sets self.cursor to the glyph index closest to the
-        given (x, y) hit point. Handles left/right half-glyph
-        snapping and empty lines.
-
-      .lines() -> Vec<Line>       (pub(crate))
-        Returns cached line layout. Hashes self, checks the
-        global TEXT_LINES cache; recomputes via inner_lines()
-        on a miss.
-
-      .inner_lines() -> Vec<Line>  (pub(crate))
-        Full layout algorithm:
-          1. Split each Span on '\n' (hard breaks).
-          2. Split each logical line on whitespace (word-wrap).
-          3. If width is set, wrap words that exceed it.
-          4. Apply Align offset to each line.
-          5. If max_lines is set, truncate and append "…".
-
-  Character  (pub)
-    A single laid-out glyph.
-    Fields (tuple):
-      0: char
-      1: (x, y, w, h): (f32,f32,f32,f32)  — bounding rect
-      2: Arc<Font>
-      3: Color
-      4: f32   — line height
-      5: f32   — advance width
-
-  Line  (pub(crate))
-    One laid-out line of Characters.
-    Fields (tuple):
-      0: f32          — total line width
-      1: f32          — line height
-      2: Vec<Character>
-
-  TEXT_LINES: Arc<Mutex<HashMap<u64, Vec<Line>>>>
-    Global lazy-static cache mapping Text hash → laid-out lines.
-    Avoids re-layout when the same Text is drawn each frame.
-
-
-================================================================
-FILE: src/canvas.rs   (feature = "canvas")
-================================================================
-
-PURPOSE
-  High-level entry point. Owns the wgpu surface, device, queue,
-  MSAA texture, depth buffer, and the Renderer. One Canvas per
-  window.
-
-CONSTANT
-  SAMPLE_COUNT: u32 = 4   — MSAA sample count
-
-STRUCT: Canvas
-
-  CONSTRUCTOR
-    Canvas::new<W: WindowHandle>(window, width, height)
-             -> Self   (async)
-      - Creates wgpu Instance, Surface, Adapter, Device, Queue.
-      - Configures surface with first supported format/present mode.
-      - Limits: downlevel_webgl2_defaults; max texture 8192
-        (4096 on Android).
-      - Panics if width or height > max texture dimension.
-      - Creates MSAA view (if SAMPLE_COUNT > 1) and depth view.
-      - Constructs Renderer with MultisampleState and
-        DepthStencilState (Depth32Float, GreaterEqual compare).
-
-  METHODS
-
-    .resize(new_window: Option<Arc<W>>, width, height)
-      Reconfigures the surface and recreates MSAA + depth views.
-      Clears the cached previous frame (forces full redraw).
-      No-ops if width or height is 0.
-
-    .draw(&mut self, atlas: &mut Atlas, items: Vec<(Area, Item)>)
-      1. Calls atlas.trim() to evict stale cache entries.
-      2. Diffs items against self.old; skips the frame if equal.
-      3. Calls renderer.prepare(…) to upload vertices/textures.
-      4. Acquires the next surface texture.
-      5. Begins a render pass:
-           - Color attachment: MSAA view (resolves to frame view)
-           - Depth attachment: Depth32Float, cleared to 0.0
-           - Background: transparent (r=g=b=a=0)
-      6. Calls renderer.render(&mut rpass).
-      7. Submits and presents.
-
-  PRIVATE HELPERS
-    create_msaa_view(device, config) -> TextureView
-    create_depth_view(device, config) -> TextureView
-
-
-================================================================
-FILE: src/renderer/mod.rs   (feature = "renderer")
-================================================================
-
-PURPOSE
-  Mid-level renderer. Splits items into colored shapes and
-  images/text, delegates to ColorRenderer and ImageRenderer.
-  Stateless between frames except for internal GPU buffers.
-
-STRUCT: Renderer
-
-  ::new(device, texture_format, multisample, depth_stencil)
-    Constructs ColorRenderer and ImageRenderer with shared
-    pipeline configuration.
-
-  .prepare(device, queue, width, height, atlas, items)
-    Enumerates items, assigns z-index by position (index 0 = back,
-    higher index = front via depth buffer GreaterEqual test).
-    Routes:
-      Item::Shape → ColorRenderer  as (z, area, ShapeType, Color)
-      Item::Image → ImageRenderer  as (z, area, ShapeType, Arc<RgbaImage>, Option<Color>)
-      Item::Text  → atlas.text.get(text) decomposes into glyph
-                    quads, each forwarded to ImageRenderer with
-                    the glyph's offset folded into area.offset.
-
-  .render(render_pass)
-    Calls color_renderer.render then image_renderer.render.
-
-STRUCT: Atlas   (pub, also re-exported from lib.rs)
-  Owns two sub-atlases:
-    atlas.text  — glyph texture atlas (fontdue rasterised glyphs)
-    atlas.image — general image atlas
-  .trim() — evict entries not used in the last frame.
-
-SUB-MODULES (private)
-  buffer        — GPU buffer helpers (vertex/index upload)
-  vertex        — vertex layout definitions
-  color         — ColorRenderer (shapes via WGSL shader)
-  image         — ImageRenderer (images + glyphs via WGSL shader)
-  atlas         — Atlas + per-type cache logic
-
-
-================================================================
-QUICK REFERENCE — DATA FLOW
-================================================================
-
-  Application layer (prism2)
-  │
-  │  Vec<(Area, Item)>          ← assembled by drawable.rs
-  ▼
-  Canvas::draw(atlas, items)
-  │
-  ├── Renderer::prepare(...)
-  │     ├── Item::Shape  → ColorRenderer::prepare
-  │     ├── Item::Image  → ImageRenderer::prepare
-  │     └── Item::Text   → Atlas::text.get → ImageRenderer::prepare
-  │
-  └── Renderer::render(render_pass)
-        ├── ColorRenderer::render
-        └── ImageRenderer::render
-
-
-================================================================
-QUICK REFERENCE — CREATING DRAW ITEMS
-================================================================
-
-  // Filled red circle, 50px diameter
-  let item = Item::Shape(Shape {
-      shape: ShapeType::Ellipse(0.0, (50.0, 50.0), 0.0),
-      color: Color(255, 0, 0, 255),
-  });
-
-  // Image clipped to a rounded rectangle
-  let item = Item::Image(Image {
-      shape: ShapeType::RoundedRectangle(0.0, (100.0, 100.0), 0.0, 12.0),
-      image: my_arc_rgba_image,
-      color: None,
-  });
-
-  // Single-span text, left-aligned, wrapping at 200px
-  let item = Item::Text(Text::new(
-      vec![Span::new(
-          "Hello world".into(),
-          16.0, None,
-          my_font.clone(),
-          Color(255,255,255,255),
-          0.0,
-      )],
-      Some(200.0),
-      Align::Left,
-      None,
-  ));
-
-  // Place at (10, 20), clip to a 300x400 rect
-  let area = Area {
-      offset: (10.0, 20.0),
-      bounds: Some((10.0, 20.0, 310.0, 420.0)),
-  };
-
-================================================================
+Dependency direction:
+  Ramp -> Prism
+  Ramp -> Maverick
+  Ramp -> wgpu_prism -> Prism

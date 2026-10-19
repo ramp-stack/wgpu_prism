@@ -1,3 +1,1 @@
-fn main() {
-    demo::maverick_main()
-}
+fn main() {demo::main()}
