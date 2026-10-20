@@ -17,6 +17,8 @@ checksum = "aae1277d39aeec15cb388266ecc24b11c80469deae6067e17a1a7aa9e5c1f234"
 [[package]]
 name = "air"
 version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd055c97ebc4f84c65902455c8f6f75eb00e2f6d79d250af701dd544eab117f9"
 dependencies = [
  "chacha20-poly1305",
  "chrono",
@@ -1636,6 +1638,8 @@ checksum = "e8cf8e6a8aa66ce33f63993ffc4ea4271eb5b0530a9002db8455ea6050c77bfa"
 [[package]]
 name = "prism2"
 version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1431f92abefca23d762eef9e33ce6ae4d10238a5d6c5dfc9652646e0349acf11"
 dependencies = [
  "air",
  "anyanymap",
@@ -1656,6 +1660,8 @@ dependencies = [
 [[package]]
 name = "prism_proc"
 version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4d615bfef9d3480064eae6546ecd33b36eb0014fa2b95cc8de1e58c870609782"
 dependencies = [
  "proc-macro2 1.0.106",
  "quote 1.0.45",
