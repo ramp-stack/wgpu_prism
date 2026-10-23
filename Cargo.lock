@@ -1729,7 +1729,6 @@ dependencies = [
  "fontdue",
  "futures",
  "futures-timer",
- "image 0.24.9",
  "include_dir",
  "inventory",
  "nsvg",

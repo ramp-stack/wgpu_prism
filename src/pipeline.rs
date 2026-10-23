@@ -1,8 +1,6 @@
 use prism::drawable::{Color, Instruction, Item, Offset, Rect, shape::{Shape, Variant}};
-use ::image::RgbaImage;
+use prism::hardware::Image;
 use wgpu::{DepthStencilState, Device, MultisampleState, Queue, RenderPass, TextureFormat};
-
-use std::sync::Arc;
 
 mod buffer;
 mod vertex;
@@ -14,7 +12,7 @@ mod atlas;
 use atlas::TextAtlas;
 
 pub type ShapeItem = (Offset, Rect, Shape, f32);
-pub type ImageItem = (ShapeItem, Arc<RgbaImage>, Option<Color>);
+pub type ImageItem = (ShapeItem, Image, Option<Color>);
 
 pub struct Pipeline {
     color: ColorRenderer,
@@ -50,7 +48,7 @@ impl Pipeline {
                             continue
                         }
                         let pixels = match item {
-                            Item::Image(_, image, _) => Arc::clone(image),
+                            Item::Image(_, image, _) => image.clone(),
                             Item::Svg(_, svg, _) => {
                                 let (width, height) = svg.dimensions();
                                 let dimensions = (f64::from(width), f64::from(height));
@@ -74,8 +72,9 @@ impl Pipeline {
                         let (_, _, width, height) = character.1;
                         if width <= 0.0 || height <= 0.0 {continue}
                         if let Some((image, bearing)) = self.text.get(&character, scale) {
+                            let (width, height) = image.dimensions();
                             let shape = Shape::new(
-                                image.width() as f32 / scale, image.height() as f32 / scale,
+                                width as f32 / scale, height as f32 / scale,
                                 Color::white(), Variant::Rectangle,
                             );
                             let offset = (

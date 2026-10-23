@@ -1,6 +1,5 @@
 use bytemuck::{Pod, Zeroable};
 use prism::drawable::Color;
-use image::RgbaImage;
 use wgpu::{VertexAttribute, VertexFormat};
 
 use std::fmt::Debug;
@@ -78,10 +77,10 @@ pub struct ImageVertex<V: Vertex = ShapeVertex> {
     pub recolor: u32,
 }
 impl<V: Vertex> ImageVertex<V> {
-    pub fn new(shape: [V; 4], image: &RgbaImage, size: (f32, f32), color: Option<Color>) -> [Self; 4] {
+    pub fn new(shape: [V; 4], dimensions: (u32, u32), size: (f32, f32), color: Option<Color>) -> [Self; 4] {
         let (mut x, mut y, mut x2, mut y2) = (0.0, 0.0, 1.0, 1.0);
-        let wr = size.0 / image.width() as f32;
-        let hr = size.1 / image.height() as f32;
+        let wr = size.0 / dimensions.0 as f32;
+        let hr = size.1 / dimensions.1 as f32;
         if hr > wr {
             x = (1.0 - wr / hr) * 0.5;
             x2 = 1.0 - x;
