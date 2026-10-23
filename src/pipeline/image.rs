@@ -76,17 +76,18 @@ impl ImageRenderer {
         self.atlas.trim();
         for (item, pixels, color) in items {
             let image = self.atlas.get(queue, device, &self.bind_group_layout, &self.sampler, &pixels);
+            let dimensions = pixels.pixels().0;
             let size = (item.2.width, item.2.height);
             match item.2.variant {
                 Variant::Ellipse => self.ellipse_renderer.images.push((ImageVertex::new(
-                    ShapeVertex::new(width, height, item), &pixels, size, color
+                    ShapeVertex::new(width, height, item), dimensions, size, color
                 ), image)),
                 Variant::Rectangle => self.rectangle_renderer.images.push((ImageVertex::new(
-                    ShapeVertex::new(width, height, item), &pixels, size, color
+                    ShapeVertex::new(width, height, item), dimensions, size, color
                 ), image)),
                 Variant::RoundedRectangle(radius) => {
                     self.rounded_rectangle_renderer.images.push((ImageVertex::new(
-                        RoundedRectangleVertex::new(width, height, item, radius), &pixels, size, color
+                        RoundedRectangleVertex::new(width, height, item, radius), dimensions, size, color
                     ), image));
                 },
             }

@@ -26,7 +26,10 @@ let presented = renderer.draw(instructions, display_scale);
 image dimensions, offsets, and clip rectangles in logical units. The renderer scales prepared
 geometry to physical pixels. Raster display resizing reuses the same decoded pixels and GPU texture.
 On the first upload only, an image exceeding the GPU texture limit is reduced while preserving its
-aspect ratio; the original shared pixels remain the texture cache key. SVGs are separate instructions
+aspect ratio; the borrowed pixel pointer remains the texture cache key, with its `Image` retained
+to own the buffer. Visible images stay resident; recently hidden images are retained within a
+32-image, 64 MiB combined pixel and texture budget. Spare textures also have bounded retention.
+SVGs are separate instructions
 and rasterize for their physical display size. Raster pixel access is lazy; the backend supplies
 its corrupted-image placeholder when encoded content cannot decode.
 
