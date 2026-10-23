@@ -1718,7 +1718,7 @@ checksum = "e8cf8e6a8aa66ce33f63993ffc4ea4271eb5b0530a9002db8455ea6050c77bfa"
 
 [[package]]
 name = "prism2"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "air",
  "anyanymap",
@@ -1742,7 +1742,7 @@ dependencies = [
 
 [[package]]
 name = "prism_proc"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "proc-macro2 1.0.106",
  "quote 1.0.45",
@@ -2732,7 +2732,7 @@ dependencies = [
 
 [[package]]
 name = "wgpu_prism"
-version = "6.0.0"
+version = "6.0.1"
 dependencies = [
  "bytemuck",
  "image 0.24.9",
