@@ -1,25 +1,20 @@
 [package]
-name = "wgpu_canvas"
-version = "5.0.8"
+name = "wgpu_prism"
+version = "6.0.0"
 edition = "2024"
 license = "BSD-3-Clause"
-repository = "https://github.com/ramp-stack/wgpu_canvas.git"
-description = "A 2D WGPU renderer API for drawing text, shapes, and images with Rust."
-documentation = "https://docs.rs/wgpu_canvas"
+repository = "https://github.com/ramp-stack/wgpu_prism.git"
+description = "A WGPU renderer for Prism drawing instructions."
+documentation = "https://docs.rs/wgpu_prism"
 readme = "README.md"
-keywords = ["wgpu", "canvas", "2d", "graphics", "rust"]
-categories = ["graphics", "rendering", "gui", "game-development"]
+keywords = ["wgpu", "prism", "2d", "graphics", "rust"]
+categories = ["graphics", "rendering", "gui"]
+
+exclude = ["**/.DS_Store", ".idea/**"]
 
 [dependencies]
-wgpu = {version="25.0.0", optional=true}
-bytemuck = {version="1.21.0", optional=true}
-image = {package="image", version="0.24.9"}
-fontdue = "0.9.3"
-lazy_static = "1.5.0"
-unicode-segmentation = "1"
+prism = {package = "prism2", path = "../prism"}
+wgpu = "25.0.0"
+bytemuck = "1.21.0"
+image = "0.24.9"
 swash = "0.2.10"
-
-[features]
-default = ["canvas", "renderer"]
-canvas = ["renderer"]
-renderer = ["dep:wgpu", "dep:bytemuck"]

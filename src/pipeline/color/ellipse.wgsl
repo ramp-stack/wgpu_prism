@@ -19,9 +19,7 @@ struct VertexOutput {
 };
 
 @vertex
-fn vs_main(
-    shape: ShapeInput,
-) -> VertexOutput {
+fn vs_main(shape: ShapeInput) -> VertexOutput {
     var out: VertexOutput;
     out.position = vec4<f32>(shape.position, shape.z, 1.0);
     out.uv = shape.uv;
@@ -31,11 +29,10 @@ fn vs_main(
     out.bounds = shape.bounds;
     out.stroke = shape.stroke;
     out.color = shape.color;
-	out.vertex_position = shape.position;
+    out.vertex_position = shape.position;
 
     return out;
 }
-
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
@@ -43,11 +40,25 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
        in.vertex_position.y > in.bounds[1] || in.vertex_position.y < in.bounds[3] {
         discard;
     }
+
+    let a = (in.size.x / 2.0);
+    let b = (in.size.y / 2.0);
+    let x = (a-(in.uv.x)) / (a - 1.0);
+    let y = (b-(in.uv.y)) / (b - 1.0);
+    let d = x*x+y*y;
+    let p = (2.0/a);
+
+    var stroke = 1.0;
     if in.stroke > 0 {
-        if in.uv.x > in.stroke && in.uv.x < in.size.x-in.stroke &&
-           in.uv.y > in.stroke && in.uv.y < in.size.y-in.stroke {
-            discard;
-        }
+        let sa = (in.size.x-(in.stroke*2.0)) / 2.0;
+        let sb = (in.size.y-(in.stroke*2.0)) / 2.0;
+        let sx = (a-(in.uv.x)) / (sa - 1.0);
+        let sy = (b-(in.uv.y)) / (sb - 1.0);
+        let sd = sx*sx+sy*sy;
+        stroke = smoothstep(1.0, 1.0+p, sd);
     }
-    return in.color;
+
+    var alpha = (1.0-smoothstep(1.0, 1.0+p, d)) * stroke;
+
+    return vec4<f32>(in.color[0], in.color[1], in.color[2], in.color[3]*alpha);
 }
