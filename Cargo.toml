@@ -1,6 +1,6 @@
 [package]
 name = "wgpu_prism"
-version = "6.0.1"
+version = "7.0.0"
 edition = "2024"
 license = "BSD-3-Clause"
 repository = "https://github.com/ramp-stack/wgpu_prism.git"
@@ -13,7 +13,7 @@ categories = ["graphics", "rendering", "gui"]
 exclude = ["**/.DS_Store", ".idea/**"]
 
 [dependencies]
-prism = {package = "prism2", version = "1.0.1", path = "../prism"}
+prism = {package = "prism2", version = "2.0.0", path = "../prism"}
 wgpu = "25.0.0"
 bytemuck = "1.21.0"
 image = "0.24.9"
