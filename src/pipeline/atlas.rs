@@ -1,6 +1,5 @@
 use image::{ImageBuffer, Rgba};
-use prism::drawable::text::{Character, Font};
-use prism::hardware::Image;
+use media::{Image, Pixel};
 use swash::scale::{Render, ScaleContext, Source, StrikeWith, image::Content};
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindingResource, Device,
@@ -11,17 +10,21 @@ use wgpu::{
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::drawable::text::{Character, Font};
+
+type Glyphs = HashMap<(String, bool, u32), (Option<(Image, (f32, f32))>, bool)>;
+
 #[derive(Default)]
 pub struct ImageAtlas {
     images: Vec<(Image, Texture, Arc<BindGroup>, bool)>,
-    lookup: HashMap<usize, usize>,
+    lookup: HashMap<(usize, (u32, u32)), usize>,
     spare: Vec<(Texture, Arc<BindGroup>)>,
 }
 impl ImageAtlas {
     pub fn trim(&mut self) {
         let lookup = &mut self.lookup;
         let (mut count, mut bytes) = self.images.iter().fold((0, 0usize), |(count, bytes), entry| {
-            let size = entry.0.pixels().1.len()
+            let size = entry.0.len() * 4
                 + entry.1.width() as usize * entry.1.height() as usize * 4;
             (count + 1, bytes + size)
         });
@@ -31,12 +34,12 @@ impl ImageAtlas {
             let unused = !*used && (count > 32 || bytes > 64 * 1024 * 1024);
             if unused {
                 count -= 1;
-                bytes -= image.pixels().1.len()
+                bytes -= image.len() * 4
                     + texture.width() as usize * texture.height() as usize * 4;
             }
             *used = false;
             if unused && !lookup.is_empty() {
-                lookup.remove(&(image.pixels().1.as_ptr() as usize));
+                lookup.remove(&(image.as_ptr() as usize, image.dimensions));
                 first = first.min(index);
             }
             index += 1;
@@ -46,7 +49,7 @@ impl ImageAtlas {
             lookup.clear();
         } else {
             for (index, (image, _, _, _)) in self.images.iter().enumerate().skip(first) {
-                *lookup.get_mut(&(image.pixels().1.as_ptr() as usize)).unwrap() = index;
+                *lookup.get_mut(&(image.as_ptr() as usize, image.dimensions)).unwrap() = index;
             }
         }
         let (mut count, mut bytes) = (0, 0u64);
@@ -62,11 +65,16 @@ impl ImageAtlas {
     }
 
     pub fn get(&mut self, queue: &Queue, device: &Device, layout: &BindGroupLayout, sampler: &Sampler, image: &Image) -> Arc<BindGroup> {
-        let ((width, height), pixels) = image.pixels();
-        let key = pixels.as_ptr() as usize;
+        let (width, height) = image.dimensions;
+        let pixels: &[u8] = image.as_ref();
+        assert!(width > 0 && height > 0);
+        assert_eq!(image.len(), width as usize * height as usize);
+        let key = (image.as_ptr() as usize, image.dimensions);
         // Small caches are faster to scan; larger ones use the identity index.
         let cached = if self.lookup.is_empty() {
-            self.images.iter().position(|(cached, _, _, _)| cached.pixels().1.as_ptr() as usize == key)
+            self.images.iter().position(|(cached, _, _, _)| {
+                (cached.as_ptr() as usize, cached.dimensions) == key
+            })
         } else {
             self.lookup.get(&key).copied()
         };
@@ -122,7 +130,7 @@ impl ImageAtlas {
         self.images.push((image.clone(), texture, group.clone(), true));
         if index == 32 {
             self.lookup.extend(self.images.iter().enumerate()
-                .map(|(index, (image, _, _, _))| (image.pixels().1.as_ptr() as usize, index)));
+                .map(|(index, (image, _, _, _))| ((image.as_ptr() as usize, image.dimensions), index)));
         } else if index > 32 {
             self.lookup.insert(key, index);
         }
@@ -139,7 +147,7 @@ impl TextAtlas {
         self.fonts.retain(|(_, glyphs)| glyphs.values().any(|(_, used)| *used));
         let (mut count, mut bytes) = self.fonts.iter().flat_map(|(_, glyphs)| glyphs.values())
             .fold((0, 0usize), |(count, bytes), (glyph, _)| {
-                (count + 1, bytes + glyph.as_ref().map_or(0, |(image, _)| image.pixels().1.len()))
+                (count + 1, bytes + glyph.as_ref().map_or(0, |(image, _)| image.len() * 4))
             });
         for (_, glyphs) in &mut self.fonts {
             glyphs.retain(|_, (glyph, used)| {
@@ -147,7 +155,7 @@ impl TextAtlas {
                 let keep = *used || (count <= 4096 && bytes <= 32 * 1024 * 1024);
                 if !keep {
                     count -= 1;
-                    bytes -= glyph.as_ref().map_or(0, |(image, _)| image.pixels().1.len());
+                    bytes -= glyph.as_ref().map_or(0, |(image, _)| image.len() * 4);
                 }
                 *used = false;
                 keep
@@ -187,22 +195,28 @@ impl TextAtlas {
                         let (width, height) = (image.placement.width, image.placement.height);
                         if width == 0 || height == 0 {return None}
                         let offset = (image.placement.left as f32, -image.placement.top as f32);
-                        let bytes = match image.content {
-                            Content::Mask => {
-                                image.data.into_iter().flat_map(|alpha| [0, 0, 0, alpha]).collect()
+                        let pixels = match image.content {
+                            Content::Mask => image.data.into_iter().map(|alpha| Pixel {
+                                red: 0, green: 0, blue: 0, alpha,
+                            }).collect(),
+                            Content::Color | Content::SubpixelMask => {
+                                image.data.chunks_exact(4).map(|pixel| Pixel {
+                                    red: pixel[0], green: pixel[1], blue: pixel[2], alpha: pixel[3],
+                                }).collect()
                             }
-                            Content::Color | Content::SubpixelMask => image.data,
                         };
-                        Some((Image::from_rgba((width, height), bytes), offset))
+                        Some((Image::new((width, height), pixels), offset))
                     })
                 } else {
                     character.0.chars().next().and_then(|character| {
                         let (metrics, bytes) = font.rasterize(character, size);
                         if !bytes.iter().any(|alpha| *alpha != 0) {return None}
                         let offset = (metrics.xmin as f32, -(metrics.ymin as f32 + metrics.height as f32));
-                        let bytes = bytes.into_iter().flat_map(|alpha| [0, 0, 0, alpha]).collect();
+                        let pixels = bytes.into_iter().map(|alpha| Pixel {
+                            red: 0, green: 0, blue: 0, alpha,
+                        }).collect();
                         let dimensions = (metrics.width as u32, metrics.height as u32);
-                        Some((Image::from_rgba(dimensions, bytes), offset))
+                        Some((Image::new(dimensions, pixels), offset))
                     })
                 };
                 (glyph, false)
@@ -211,5 +225,3 @@ impl TextAtlas {
         glyph.clone()
     }
 }
-
-type Glyphs = HashMap<(String, bool, u32), (Option<(Image, (f32, f32))>, bool)>;

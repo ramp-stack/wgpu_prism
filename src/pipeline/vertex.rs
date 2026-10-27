@@ -1,9 +1,9 @@
 use bytemuck::{Pod, Zeroable};
-use prism::drawable::Color;
 use wgpu::{VertexAttribute, VertexFormat};
 
 use std::fmt::Debug;
 
+use crate::drawable::Color;
 use super::ShapeItem;
 
 #[repr(C)]

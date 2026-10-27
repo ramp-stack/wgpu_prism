@@ -1,4 +1,3 @@
-use prism::drawable::{Instruction, Item};
 use wgpu::{
     CommandEncoderDescriptor, CompareFunction, DepthBiasState, DepthStencilState, Device,
     DeviceDescriptor, Extent3d, Features, Instance, InstanceDescriptor, Limits, LoadOp,
@@ -8,6 +7,7 @@ use wgpu::{
     TextureUsages, TextureView, TextureViewDescriptor, Trace, WindowHandle,
 };
 
+use crate::drawable::{Instruction, Item};
 use crate::pipeline::Pipeline;
 
 pub struct Renderer<'surface> {
@@ -66,8 +66,10 @@ impl<'surface> Renderer<'surface> {
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 {return}
         let max = self.device.limits().max_texture_dimension_2d;
-        self.config.width = width.min(max);
-        self.config.height = height.min(max);
+        let (width, height) = (width.min(max), height.min(max));
+        if self.config.width == width && self.config.height == height {return}
+        self.config.width = width;
+        self.config.height = height;
         self.surface.configure(&self.device, &self.config);
         self.msaa = Self::attachment(&self.device, &self.config, self.config.format);
         self.depth = Self::attachment(&self.device, &self.config, TextureFormat::Depth32Float);
@@ -81,7 +83,8 @@ impl<'surface> Renderer<'surface> {
                     (Item::Shape(left), Item::Shape(right)) => left == right,
                     (Item::Text(left), Item::Text(right)) => left == right,
                     (Item::Image(ls, li, lc), Item::Image(rs, ri, rc)) => {
-                        ls == rs && lc == rc && li == ri
+                        ls == rs && lc == rc && li.dimensions == ri.dimensions
+                            && li.as_ptr() == ri.as_ptr()
                     }
                     (Item::Svg(ls, li, lc), Item::Svg(rs, ri, rc)) => {
                         ls == rs && lc == rc && li == ri
@@ -103,11 +106,6 @@ impl<'surface> Renderer<'surface> {
     }
 
     pub fn render(&mut self) -> bool {
-        if self.dirty {
-            let size = (self.config.width as f32, self.config.height as f32);
-            self.pipeline.prepare(&self.device, &self.queue, size, self.scale, &self.instructions);
-            self.dirty = false;
-        }
         let output = match self.surface.get_current_texture() {
             Ok(output) => output,
             Err(wgpu::SurfaceError::Timeout) => return false,
@@ -123,6 +121,13 @@ impl<'surface> Renderer<'surface> {
         };
         let view = output.texture.create_view(&TextureViewDescriptor::default());
         let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor::default());
+        if self.dirty {
+            let size = (self.config.width as f32, self.config.height as f32);
+            self.pipeline.prepare(
+                &self.device, &self.queue, &mut encoder, size, self.scale, &self.instructions,
+            );
+            self.dirty = false;
+        }
         let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: None,
             color_attachments: &[Some(RenderPassColorAttachment {

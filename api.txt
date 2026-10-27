@@ -1,14 +1,18 @@
 WGPU_PRISM API
 
-wgpu_prism provides one public rendering entry point:
+The default drawable feature enables wgpu_prism::drawable and its CPU dependencies only.
+The renderer feature adds WGPU pipelines and the public rendering entry point below.
+Disabling all features compiles neither module nor their dependencies.
+
+With features = ["renderer"]:
 
   Renderer<'surface>
 
     async fn new<W: wgpu::WindowHandle + 'surface>(window: W, width: u32, height: u32) -> Self
     fn resize(&mut self, width: u32, height: u32)
-    fn update(&mut self, instructions: Vec<prism::drawable::Instruction>, scale: f32) -> bool
+    fn update(&mut self, instructions: Vec<wgpu_prism::drawable::Instruction>, scale: f32) -> bool
     fn render(&mut self) -> bool
-    fn draw(&mut self, instructions: Vec<prism::drawable::Instruction>, scale: f32) -> bool
+    fn draw(&mut self, instructions: Vec<wgpu_prism::drawable::Instruction>, scale: f32) -> bool
 
 update retains one instruction list and returns whether the scene needs presentation. It compares
 ordered instruction values exactly, using shared image identity rather than pixel comparisons.
@@ -23,38 +27,47 @@ reconfiguration and one retry; exhausted recovery and unrecoverable failures pan
 Window width and height are physical pixels. Instructions use logical coordinates.
 Pass the window's display scale factor to update or draw. Do not pre-scale instructions.
 
-Prism owns all drawing data:
+wgpu_prism::drawable owns the drawing primitives; Prism reexports them:
 
-  prism::drawable::Instruction
+  wgpu_prism::drawable::Instruction
     offset: (f32, f32)
     bound: (f32, f32, f32, f32)  -- clip x, y, width, height
     item: Item
 
-  prism::drawable::Item
-    Shape(prism::drawable::shape::Shape)
-    Text(prism::drawable::text::Text)
-    Image(prism::drawable::shape::Shape, prism::hardware::Image, Option<Color>)
-    Svg(prism::drawable::shape::Shape, prism::drawable::Svg, Option<Color>)
+  wgpu_prism::drawable::Item
+    Shape(wgpu_prism::drawable::shape::Shape)
+    Text(wgpu_prism::drawable::text::Text)
+    Image(wgpu_prism::drawable::shape::Shape, media::Image, Option<Color>)
+    Svg(wgpu_prism::drawable::shape::Shape, wgpu_prism::drawable::Svg, Option<Color>)
     The shape supplies display size and mask; its color is ignored for images.
     None preserves image colors. Some(color) replaces RGB and multiplies source alpha by color alpha.
     Images preserve aspect ratio and crop centrally to cover the shape.
 
-  prism::drawable::Icon(pub prism::drawable::Svg, pub Color)
-    Implements Drawable with the same scalable size request as Svg.
+  wgpu_prism::drawable::Icon(pub wgpu_prism::drawable::Svg, pub Color)
+    Prism implements Drawable with the same scalable size request as Svg.
     Image, Svg, and Icon use their allocated layout size.
     Raster display resizing retains the original pixels and GPU texture identity.
-    SVGs rasterize at the physical display size with a bounded shared cache.
+    SVG geometry stays on the GPU across position, size, and tint changes.
+    Source transparency, groups, and nested clip paths compose on the GPU; no CPU fallback exists.
+    Moving and recoloring reuse the composed output. Resizing redraws retained geometry.
 
-  prism::drawable::shape::Shape
+  wgpu_prism::drawable::Svg
+    fn read<R: Read>(reader: R) -> Result<Self, String>
+    fn dimensions(&self) -> (f32, f32)
+    Clone shares immutable parsed content; equality compares that shared identity.
+    read accepts solid fills/strokes, opacity, transforms, and nested clip paths.
+    Unsupported effects return an error during read; rasterize is removed.
+
+  wgpu_prism::drawable::shape::Shape
     stroke, width, height, angle, color, variant
     Variant: Ellipse, Rectangle, RoundedRectangle(radius)
     Angles are degrees. A zero stroke fills the shape.
 
-  prism::drawable::text
+  wgpu_prism::drawable::text
     Font, Text, Span, Align, Character
-    Prism performs text layout. The renderer rasterizes and caches its positioned glyphs.
+    Text performs CPU layout. The optional renderer rasterizes and caches its positioned glyphs.
 
-  prism::drawable::Color
+  wgpu_prism::drawable::Color
     RGBA bytes.
 
 The renderer owns surface configuration, GPU pipelines, frame buffers, and image/glyph caches.
@@ -67,4 +80,5 @@ Data flow:
 Dependency direction:
   Ramp -> Prism
   Ramp -> Maverick
-  Ramp -> wgpu_prism -> Prism
+  Prism -> wgpu_prism (drawable only)
+  Ramp -> wgpu_prism (renderer, which includes drawable)

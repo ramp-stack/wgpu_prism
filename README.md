@@ -1,16 +1,31 @@
 # wgpu_prism
 
-`wgpu_prism` renders Prism drawing instructions with WGPU. Prism owns the instruction, shape,
-text, color, and image types; this crate owns the GPU surface, pipelines, and texture caches.
-It depends on Prism. Prism does not depend on this renderer.
+`wgpu_prism` owns drawing instructions, shapes, colors, text layout, SVGs, and an optional WGPU
+renderer. Raster images use the shared `media2::Image` type. This crate has no dependency on
+Prism; Prism reexports the drawing primitives and adds UI layout, events, and `Drawable`
+implementations.
+
+The default `drawable` feature provides the CPU drawing types, font measurement, text hit
+testing, and SVG parsing without enabling WGPU. The optional `renderer` feature enables
+`drawable` and the GPU surface, pipelines, SVG tessellation, and texture caches. Ramp enables
+`renderer` when assembling a graphical application. A neighboring local crate can enable it with:
+
+```toml
+[dependencies]
+wgpu_prism = { path = "../wgpu_prism", features = ["renderer"] }
+```
+
+With `default-features = false`, select `drawable` explicitly to use only the drawing types.
+Disabling both features exposes neither module. CPU drawing still depends on `media2` for
+images, on the font libraries for measurement, and on `usvg` for SVG parsing.
 
 ## Drawing
 
-Create one `Renderer` for a window, using its physical dimensions. Pass Prism instructions in
+Create one `Renderer` for a window, using its physical dimensions. Pass drawing instructions in
 logical coordinates and the window's display scale to `draw`:
 
 ```rust
-use prism::drawable::{Color, Instruction, Item, shape::{Shape, Variant}};
+use wgpu_prism::drawable::{Color, Instruction, Item, shape::{Shape, Variant}};
 use wgpu_prism::Renderer;
 
 let mut renderer = Renderer::new(window, physical_width, physical_height).await;
@@ -26,12 +41,23 @@ let presented = renderer.draw(instructions, display_scale);
 image dimensions, offsets, and clip rectangles in logical units. The renderer scales prepared
 geometry to physical pixels. Raster display resizing reuses the same decoded pixels and GPU texture.
 On the first upload only, an image exceeding the GPU texture limit is reduced while preserving its
-aspect ratio; the borrowed pixel pointer remains the texture cache key, with its `Image` retained
-to own the buffer. Visible images stay resident; recently hidden images are retained within a
+aspect ratio. The texture cache uses the pixel pointer and intrinsic dimensions as its key and
+retains an `Image` clone to own those pixels. Clones share storage until mutation, which gets a
+new texture upload. Drawing a video frame clones only its image handle. Visible images stay
+resident; recently hidden images are retained within a
 32-image, 64 MiB combined pixel and texture budget. Spare textures also have bounded retention.
-SVGs are separate instructions
-and rasterize for their physical display size. Raster pixel access is lazy; the backend supplies
-its corrupted-image placeholder when encoded content cannot decode.
+SVGs remain separate instructions. `Svg::read` parses and validates their vector content once;
+clones share that parsed content. The renderer retains path geometry and composes source colors,
+transparency, groups, and clip paths on the GPU. Moving, rotating, and recoloring reuse the GPU
+output; resizing redraws retained geometry at the new physical size. No CPU SVG rasterizer or
+pixel-upload fallback remains. Whole-SVG tint and destination masks apply after the SVG's paths
+have been composed, preserving overlapping transparency.
+
+The supported SVG subset includes solid fills and strokes, path and group opacity, transforms,
+and nested clip paths, using SVG’s default sRGB source compositing. Gradients, patterns, masks,
+filters, embedded images, text, other blend/interpolation modes, and dashed strokes return an
+error from `Svg::read`. Raster-image instructions already
+contain decoded pixels; media decoding and corruption concealment stay in `media2`.
 
 `draw` and `render` return whether a frame was presented. A temporary surface timeout returns
 `false`; surface loss triggers reconfiguration and one retry. Exhausted recovery or an
@@ -43,7 +69,7 @@ and Prism instructions to this API.
 
 ## Color and opacity
 
-Prism colors contain unpremultiplied sRGB bytes and a linear alpha byte. RGB is converted to
+Colors contain unpremultiplied sRGB bytes and a linear alpha byte. RGB is converted to
 linear light for rendering; alpha is divided by 255 without a color-space conversion. For
 example, alpha 128 supplies about 50% opacity to blending. Recolored images multiply their
 pixel alpha by this opacity; original image pixels keep their existing alpha.

@@ -1,4 +1,3 @@
-use prism::drawable::shape::Variant;
 use wgpu::{
     BufferUsages, DepthStencilState, Device, FragmentState, IndexFormat, MultisampleState,
     PipelineCompilationOptions, PipelineLayoutDescriptor, PrimitiveState, Queue, RenderPass,
@@ -6,6 +5,9 @@ use wgpu::{
     VertexState,
 };
 
+use std::ops::Range;
+
+use crate::drawable::shape::Variant;
 use super::ShapeItem;
 use super::buffer::{DynamicBufferDescriptor, DynamicBuffer, QuadIndexBuffer};
 use super::vertex::{Vertex, ShapeVertex, RoundedRectangleVertex, ColorVertex};
@@ -15,6 +17,7 @@ pub struct ColorRenderer {
     rectangle_renderer: GenericColorRenderer,
     rounded_rectangle_renderer: GenericColorRenderer,
     items: Vec<ShapeItem>,
+    indices: Vec<usize>,
     size: (f32, f32),
 }
 impl ColorRenderer {
@@ -33,26 +36,36 @@ impl ColorRenderer {
         );
         ColorRenderer {
             ellipse_renderer, rectangle_renderer, rounded_rectangle_renderer,
-            items: vec![], size: (0.0, 0.0),
+            items: vec![], indices: vec![], size: (0.0, 0.0),
         }
     }
 
     pub fn prepare(&mut self, device: &Device, queue: &Queue, width: f32, height: f32, items: Vec<ShapeItem>) {
         if self.size == (width, height) && self.items == items {return}
         let (mut ellipses, mut rects, mut rounded_rects) = (vec![], vec![], vec![]);
+        self.indices.clear();
         for &item in &items {
             let color = item.2.color;
-            match item.2.variant {
-                Variant::Ellipse => ellipses.push(ColorVertex::new(
-                    ShapeVertex::new(width, height, item), color
-                )),
-                Variant::Rectangle => rects.push(ColorVertex::new(
-                    ShapeVertex::new(width, height, item), color
-                )),
-                Variant::RoundedRectangle(radius) => rounded_rects.push(ColorVertex::new(
-                    RoundedRectangleVertex::new(width, height, item, radius), color
-                )),
-            }
+            let index = match item.2.variant {
+                Variant::Ellipse => {
+                    let index = ellipses.len();
+                    ellipses.push(ColorVertex::new(ShapeVertex::new(width, height, item), color));
+                    index
+                }
+                Variant::Rectangle => {
+                    let index = rects.len();
+                    rects.push(ColorVertex::new(ShapeVertex::new(width, height, item), color));
+                    index
+                }
+                Variant::RoundedRectangle(radius) => {
+                    let index = rounded_rects.len();
+                    rounded_rects.push(ColorVertex::new(
+                        RoundedRectangleVertex::new(width, height, item, radius), color
+                    ));
+                    index
+                }
+            };
+            self.indices.push(index);
         }
         self.ellipse_renderer.prepare(device, queue, ellipses);
         self.rectangle_renderer.prepare(device, queue, rects);
@@ -61,10 +74,22 @@ impl ColorRenderer {
         self.size = (width, height);
     }
 
-    pub fn render(&self, render_pass: &mut RenderPass<'_>) {
-        self.ellipse_renderer.render(render_pass);
-        self.rectangle_renderer.render(render_pass);
-        self.rounded_rectangle_renderer.render(render_pass);
+    pub fn render(&self, render_pass: &mut RenderPass<'_>, range: Range<usize>) {
+        let mut start = range.start;
+        while start < range.end {
+            let variant = self.items[start].2.variant;
+            let mut end = start + 1;
+            while end < range.end
+                && std::mem::discriminant(&variant)
+                    == std::mem::discriminant(&self.items[end].2.variant) {end += 1;}
+            let renderer = match variant {
+                Variant::Ellipse => &self.ellipse_renderer,
+                Variant::Rectangle => &self.rectangle_renderer,
+                Variant::RoundedRectangle(_) => &self.rounded_rectangle_renderer,
+            };
+            renderer.render(render_pass, self.indices[start]..self.indices[end - 1] + 1);
+            start = end;
+        }
     }
 }
 
@@ -72,7 +97,6 @@ struct GenericColorRenderer {
     render_pipeline: RenderPipeline,
     vertex_buffer: DynamicBuffer,
     index_buffer: QuadIndexBuffer,
-    indices: u32,
 }
 impl GenericColorRenderer {
     fn new<V: Vertex>(
@@ -106,20 +130,19 @@ impl GenericColorRenderer {
             label: None, usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
         });
         let index_buffer = QuadIndexBuffer::new(device);
-        GenericColorRenderer {render_pipeline, vertex_buffer, index_buffer, indices: 0}
+        GenericColorRenderer {render_pipeline, vertex_buffer, index_buffer}
     }
 
     fn prepare<V: bytemuck::Pod>(&mut self, device: &Device, queue: &Queue, vertices: Vec<[V; 4]>) {
         let quads = vertices.len() as u32;
-        self.indices = quads * 6;
         self.vertex_buffer.write_buffer(device, queue, bytemuck::cast_slice(&vertices));
         self.index_buffer.prepare(device, queue, quads);
     }
 
-    fn render(&self, render_pass: &mut RenderPass<'_>) {
+    fn render(&self, render_pass: &mut RenderPass<'_>, range: Range<usize>) {
         render_pass.set_pipeline(&self.render_pipeline);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.as_ref().slice(..));
         render_pass.set_index_buffer(self.index_buffer.as_ref().slice(..), IndexFormat::Uint32);
-        render_pass.draw_indexed(0..self.indices, 0, 0..1);
+        render_pass.draw_indexed(range.start as u32 * 6..range.end as u32 * 6, 0, 0..1);
     }
 }

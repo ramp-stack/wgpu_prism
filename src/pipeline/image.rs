@@ -1,4 +1,3 @@
-use prism::drawable::shape::Variant;
 use wgpu::{
     BindGroup, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType,
     BufferUsages, DepthStencilState, Device, FragmentState, IndexFormat, MultisampleState,
@@ -7,9 +6,10 @@ use wgpu::{
     TextureFormat, TextureSampleType, TextureViewDimension, VertexBufferLayout, VertexState,
 };
 
-use std::collections::HashMap;
+use std::ops::Range;
 use std::sync::Arc;
 
+use crate::drawable::shape::Variant;
 use super::ImageItem;
 use super::atlas::ImageAtlas;
 use super::buffer::{DynamicBufferDescriptor, DynamicBuffer, QuadIndexBuffer};
@@ -22,6 +22,7 @@ pub struct ImageRenderer {
     ellipse_renderer: GenericImageRenderer<ImageVertex<ShapeVertex>>,
     rectangle_renderer: GenericImageRenderer<ImageVertex<ShapeVertex>>,
     rounded_rectangle_renderer: GenericImageRenderer<ImageVertex<RoundedRectangleVertex>>,
+    items: Vec<(Variant, usize)>,
 }
 impl ImageRenderer {
     pub fn new(device: &Device, texture_format: &TextureFormat, multisample: MultisampleState, depth_stencil: Option<DepthStencilState>) -> Self {
@@ -68,24 +69,32 @@ impl ImageRenderer {
         );
         ImageRenderer {
             atlas: ImageAtlas::default(), bind_group_layout, sampler,
-            ellipse_renderer, rectangle_renderer, rounded_rectangle_renderer,
+            ellipse_renderer, rectangle_renderer, rounded_rectangle_renderer, items: vec![],
         }
     }
 
     pub fn prepare(&mut self, device: &Device, queue: &Queue, width: f32, height: f32, items: Vec<ImageItem>) {
         self.atlas.trim();
+        self.items.clear();
         for (item, pixels, color) in items {
             let image = self.atlas.get(queue, device, &self.bind_group_layout, &self.sampler, &pixels);
-            let dimensions = pixels.pixels().0;
+            let dimensions = pixels.dimensions;
             let size = (item.2.width, item.2.height);
             match item.2.variant {
-                Variant::Ellipse => self.ellipse_renderer.images.push((ImageVertex::new(
-                    ShapeVertex::new(width, height, item), dimensions, size, color
-                ), image)),
-                Variant::Rectangle => self.rectangle_renderer.images.push((ImageVertex::new(
-                    ShapeVertex::new(width, height, item), dimensions, size, color
-                ), image)),
+                Variant::Ellipse => {
+                    self.items.push((item.2.variant, self.ellipse_renderer.images.len()));
+                    self.ellipse_renderer.images.push((ImageVertex::new(
+                        ShapeVertex::new(width, height, item), dimensions, size, color
+                    ), image));
+                }
+                Variant::Rectangle => {
+                    self.items.push((item.2.variant, self.rectangle_renderer.images.len()));
+                    self.rectangle_renderer.images.push((ImageVertex::new(
+                        ShapeVertex::new(width, height, item), dimensions, size, color
+                    ), image));
+                }
                 Variant::RoundedRectangle(radius) => {
+                    self.items.push((item.2.variant, self.rounded_rectangle_renderer.images.len()));
                     self.rounded_rectangle_renderer.images.push((ImageVertex::new(
                         RoundedRectangleVertex::new(width, height, item, radius), dimensions, size, color
                     ), image));
@@ -97,10 +106,24 @@ impl ImageRenderer {
         self.rounded_rectangle_renderer.prepare(device, queue);
     }
 
-    pub fn render(&self, render_pass: &mut RenderPass<'_>) {
-        self.ellipse_renderer.render(render_pass);
-        self.rectangle_renderer.render(render_pass);
-        self.rounded_rectangle_renderer.render(render_pass);
+    pub fn render(&self, render_pass: &mut RenderPass<'_>, range: Range<usize>) {
+        let mut start = range.start;
+        while start < range.end {
+            let (variant, index) = self.items[start];
+            let mut end = start + 1;
+            while end < range.end
+                && std::mem::discriminant(&variant)
+                    == std::mem::discriminant(&self.items[end].0) {end += 1;}
+            let range = index..self.items[end - 1].1 + 1;
+            match variant {
+                Variant::Ellipse => self.ellipse_renderer.render(render_pass, range),
+                Variant::Rectangle => self.rectangle_renderer.render(render_pass, range),
+                Variant::RoundedRectangle(_) => {
+                    self.rounded_rectangle_renderer.render(render_pass, range);
+                }
+            }
+            start = end;
+        }
     }
 }
 
@@ -110,7 +133,7 @@ struct GenericImageRenderer<V> {
     index_buffer: QuadIndexBuffer,
     images: Vec<([V; 4], Arc<BindGroup>)>,
     vertices: Vec<V>,
-    indices: HashMap<Arc<BindGroup>, Vec<(u32, u32)>>,
+    bind_groups: Vec<Arc<BindGroup>>,
 }
 impl<V: Vertex> GenericImageRenderer<V> {
     fn new(
@@ -149,31 +172,34 @@ impl<V: Vertex> GenericImageRenderer<V> {
         let index_buffer = QuadIndexBuffer::new(device);
         GenericImageRenderer {
             render_pipeline, vertex_buffer, index_buffer,
-            images: vec![], vertices: vec![], indices: HashMap::new(),
+            images: vec![], vertices: vec![], bind_groups: vec![],
         }
     }
 
     fn prepare(&mut self, device: &Device, queue: &Queue) {
         self.vertices.clear();
-        for indices in self.indices.values_mut() {indices.clear();}
+        self.bind_groups.clear();
         let quads = self.images.len() as u32;
-        for (quad, (vertices, image)) in self.images.drain(..).enumerate() {
+        for (vertices, image) in self.images.drain(..) {
             self.vertices.extend(vertices);
-            let start = quad as u32 * 6;
-            self.indices.entry(image).or_default().push((start, start + 6));
+            self.bind_groups.push(image);
         }
-        self.indices.retain(|_, indices| !indices.is_empty());
         self.vertex_buffer.write_buffer(device, queue, bytemuck::cast_slice(&self.vertices));
         self.index_buffer.prepare(device, queue, quads);
     }
 
-    fn render(&self, render_pass: &mut RenderPass<'_>) {
+    fn render(&self, render_pass: &mut RenderPass<'_>, range: Range<usize>) {
         render_pass.set_pipeline(&self.render_pipeline);
         render_pass.set_vertex_buffer(0, self.vertex_buffer.as_ref().slice(..));
         render_pass.set_index_buffer(self.index_buffer.as_ref().slice(..), IndexFormat::Uint32);
-        for (bind_group, indices) in &self.indices {
-            render_pass.set_bind_group(0, Some(&**bind_group), &[]);
-            for (start, end) in indices {render_pass.draw_indexed(*start..*end, 0, 0..1);}
+        let mut start = range.start;
+        while start < range.end {
+            let mut end = start + 1;
+            while end < range.end
+                && Arc::ptr_eq(&self.bind_groups[start], &self.bind_groups[end]) {end += 1;}
+            render_pass.set_bind_group(0, Some(&*self.bind_groups[start]), &[]);
+            render_pass.draw_indexed(start as u32 * 6..end as u32 * 6, 0, 0..1);
+            start = end;
         }
     }
 }

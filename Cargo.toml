@@ -1,10 +1,10 @@
 [package]
 name = "wgpu_prism"
-version = "6.0.1"
+version = "8.0.0"
 edition = "2024"
 license = "BSD-3-Clause"
 repository = "https://github.com/ramp-stack/wgpu_prism.git"
-description = "A WGPU renderer for Prism drawing instructions."
+description = "Drawing primitives with an optional WGPU renderer."
 documentation = "https://docs.rs/wgpu_prism"
 readme = "README.md"
 keywords = ["wgpu", "prism", "2d", "graphics", "rust"]
@@ -12,9 +12,25 @@ categories = ["graphics", "rendering", "gui"]
 
 exclude = ["**/.DS_Store", ".idea/**"]
 
+[features]
+default = ["drawable"]
+drawable = [
+    "dep:media", "dep:fontdue", "dep:swash", "dep:unicode-segmentation", "dep:usvg",
+    "dep:uuid", "dep:simplecss",
+]
+renderer = [
+    "drawable", "dep:wgpu", "dep:bytemuck", "dep:image", "dep:lyon_tessellation",
+]
+
 [dependencies]
-prism = {package = "prism2", version = "1.0.1", path = "../prism"}
-wgpu = "25.0.0"
-bytemuck = "1.21.0"
-image = "0.24.9"
-swash = "0.2.10"
+media = {package = "media2", version = "0.1.0", path = "../media", optional = true}
+fontdue = {version = "0.9.4", optional = true}
+swash = {version = "0.2.10", optional = true}
+unicode-segmentation = {version = "1.13.3", optional = true}
+uuid = {version = "1.16.0", features = ["v4", "js"], optional = true}
+wgpu = {version = "25.0.0", optional = true}
+bytemuck = {version = "1.21.0", features = ["derive"], optional = true}
+image = {version = "0.24.9", optional = true}
+usvg = {version = "0.49.0", default-features = false, optional = true}
+simplecss = {version = "0.2.2", optional = true}
+lyon_tessellation = {version = "1.0.23", optional = true}
