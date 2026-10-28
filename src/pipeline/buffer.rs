@@ -28,7 +28,7 @@ impl DynamicBuffer {
         if self.contents == contents {return}
         let (mut start, mut end) = (0, contents.len());
         if self.contents.len() == contents.len() && contents.len() >= 1024 {
-            let prefix = contents.chunks_exact(64).zip(self.contents.chunks_exact(64))
+            let prefix = contents.as_chunks::<64>().0.iter().zip(self.contents.as_chunks::<64>().0)
                 .take_while(|(a, b)| a == b).count() * 64;
             start = prefix + contents[prefix..].iter().zip(&self.contents[prefix..])
                 .position(|(a, b)| a != b).unwrap();

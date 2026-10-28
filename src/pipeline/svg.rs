@@ -6,7 +6,7 @@ use lyon_tessellation::{
 use usvg::{Node, Paint, PaintOrder, Transform, tiny_skia_path::PathSegment};
 use wgpu::{
     BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor,
-    BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferDescriptor, BufferUsages,
+    BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferUsages,
     CommandEncoder, CompareFunction, DepthBiasState, DepthStencilState, Device, Extent3d,
     FragmentState, IndexFormat, LoadOp, MultisampleState, Operations, PipelineCompilationOptions,
     PipelineLayoutDescriptor, PrimitiveState, Queue, RenderPass, RenderPassColorAttachment,
@@ -17,6 +17,7 @@ use wgpu::{
     TextureView, TextureViewDescriptor, TextureViewDimension, VertexBufferLayout, VertexState,
     VertexStepMode,
 };
+use wgpu::util::{BufferInitDescriptor, DeviceExt};
 
 use std::ops::Range;
 
@@ -188,10 +189,7 @@ impl SvgRenderer {
         });
     }
 
-    pub fn push(
-        &mut self, device: &Device, queue: &Queue, viewport: (f32, f32), scale: f32,
-        item: ShapeItem, svg: &Svg, tint: Option<Color>,
-    ) -> usize {
+    pub fn push(&mut self, device: &Device, viewport: (f32, f32), scale: f32, item: ShapeItem, svg: &Svg, tint: Option<Color>) -> usize {
         let mesh = self.meshes.iter().position(|(cached, _, _, _, _)| cached == svg)
             .unwrap_or_else(|| {
                 let mut geometry = VertexBuffers::new();
@@ -203,20 +201,16 @@ impl SvgRenderer {
                 let depth = (depth + 1) as f32;
                 for vertex in &mut geometry.vertices {vertex.depth /= depth;}
                 command.normalize(depth);
-                let vertices = device.create_buffer(&BufferDescriptor {
-                    label: None, size: (geometry.vertices.len()
-                        * std::mem::size_of::<SvgVertex>()).max(4) as u64,
-                    usage: BufferUsages::VERTEX | BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
+                let vertices = bytemuck::cast_slice(&geometry.vertices);
+                let indices = bytemuck::cast_slice(&geometry.indices);
+                let vertices = device.create_buffer_init(&BufferInitDescriptor {
+                    label: None, usage: BufferUsages::VERTEX,
+                    contents: if vertices.is_empty() {&[0; 4]} else {vertices},
                 });
-                let indices = device.create_buffer(&BufferDescriptor {
-                    label: None, size: (geometry.indices.len() * 4).max(4) as u64,
-                    usage: BufferUsages::INDEX | BufferUsages::COPY_DST, mapped_at_creation: false,
+                let indices = device.create_buffer_init(&BufferInitDescriptor {
+                    label: None, usage: BufferUsages::INDEX,
+                    contents: if indices.is_empty() {&[0; 4]} else {indices},
                 });
-                if !geometry.vertices.is_empty() {
-                    queue.write_buffer(&vertices, 0, bytemuck::cast_slice(&geometry.vertices));
-                    queue.write_buffer(&indices, 0, bytemuck::cast_slice(&geometry.indices));
-                }
                 self.meshes.push((svg.clone(), vertices, indices, command, true));
                 self.meshes.len() - 1
             });

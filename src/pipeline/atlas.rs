@@ -200,7 +200,7 @@ impl TextAtlas {
                                 red: 0, green: 0, blue: 0, alpha,
                             }).collect(),
                             Content::Color | Content::SubpixelMask => {
-                                image.data.chunks_exact(4).map(|pixel| Pixel {
+                                image.data.as_chunks::<4>().0.iter().map(|pixel| Pixel {
                                     red: pixel[0], green: pixel[1], blue: pixel[2], alpha: pixel[3],
                                 }).collect()
                             }

@@ -10,6 +10,8 @@ use std::hash::{DefaultHasher, Hasher, Hash};
 
 use super::Color;
 
+type CachedLines = (u64, Arc<Vec<Line>>);
+
 #[derive(Debug, Clone, Copy, PartialEq, Hash)]
 pub enum Align { Left, Center, Right }
 
@@ -187,7 +189,7 @@ pub struct Text {
     pub focused: bool,
     pub max_lines: Option<u32>,
     // Keep natural and wrapped geometry so measuring fitted text preserves its drawing cache.
-    lines: Mutex<[Option<(u64, Arc<Vec<Line>>)>; 2]>,
+    lines: Mutex<[Option<CachedLines>; 2]>,
 }
 impl Clone for Text {
     fn clone(&self) -> Self {

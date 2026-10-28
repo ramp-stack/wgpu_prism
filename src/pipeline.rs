@@ -62,8 +62,7 @@ impl Pipeline {
                         }
                         if let Item::Svg(_, svg, _) = item {
                             svg_index = Some(self.svg.push(
-                                device, queue, size, scale, (offset, bound, *shape, z),
-                                svg, *color,
+                                device, size, scale, (offset, bound, *shape, z), svg, *color,
                             ));
                         } else if let Item::Image(_, pixels, _) = item {
                             images.push(((offset, bound, *shape, z), pixels.clone(), *color));

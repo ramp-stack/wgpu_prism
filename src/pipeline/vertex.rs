@@ -53,7 +53,7 @@ impl RoundedRectangleVertex {
 
 #[repr(packed, C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
-pub struct ColorVertex<V: Vertex = ShapeVertex> {
+pub struct ColorVertex<V = ShapeVertex> {
     pub shape: V,
     pub color: [f32; 4],
 }
@@ -71,7 +71,7 @@ impl<V: Vertex> ColorVertex<V> {
 
 #[repr(packed, C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
-pub struct ImageVertex<V: Vertex = ShapeVertex> {
+pub struct ImageVertex<V = ShapeVertex> {
     pub color: ColorVertex<V>,
     pub texture: [f32; 2],
     pub recolor: u32,
